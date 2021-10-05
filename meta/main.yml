@@ -1,0 +1,25 @@
+galaxy_info:
+  author: CofenseLabs
+  description: Provisions a WiFi access point that routes clients' traffic over a VPN service.
+  company: Cofense, Inc.
+
+  license: Apache-2.0
+
+  min_ansible_version: 2.1
+
+  platforms:
+    - name: Debian
+      versions:
+        - all
+
+  galaxy_tags:
+    - rasbian
+    - raspberry
+    - pi
+    - access point
+    - vpn
+
+collections:
+  - community.general.iptables_state
+
+dependencies: []

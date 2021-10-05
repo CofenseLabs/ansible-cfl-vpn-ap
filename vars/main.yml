@@ -1,0 +1,9 @@
+---
+opt_dir: /opt/cfl-vpnap
+openvpn_dir: /etc/openvpn
+iptables_comment:  "NAT for cfl-vpn-ap (managed by ansible)"
+vpn_nord_server_config_hostname: downloads.nordcdn.com
+vpn_vypr_server_config_version: 20200320
+vpn_vypr_server_config_hostname: support.vyprvpn.com
+vpn_vypr_server_config_url: https://{{ vpn_vypr_server_config_hostname }}/hc/article_attachments/360052617332/Vypr_OpenVPN_{{ vpn_vypr_server_config_version }}.zip
+dig_results: []

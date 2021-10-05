@@ -1,0 +1,229 @@
+---
+- block:
+  - name: Get default route information
+    command: ip route list default
+    register: route
+    changed_when: no
+
+  - name: Extract default gateway and network interface from default route information
+    set_fact:
+      default_gateway: "{{ dict(route_parts|zip(route_parts[1:])).via }}"
+      local_interface: "{{ dict(route_parts|zip(route_parts[1:])).dev }}"
+    vars:
+      route_parts: "{{ route.stdout.splitlines()[0].split()[1:] }}"
+    changed_when: no
+
+  - name: Append hostnames that Ansible might need to reach no_vpn_dest_hostnames
+    set_fact:
+      no_vpn_dest_hostnames: "{{ no_vpn_dest_hostnames + [ item ] }}"
+    with_items:
+      - "{{ vpn_nord_server_config_hostname }}"
+      - "{{ vpn_vypr_server_config_hostname }}"
+
+  - name: Collect hostnames of active apt sources
+    shell: "apt-cache policy | grep origin | sed -e 's/origin\\|\\s//g' | sort | uniq"
+    register: apt_sources
+    changed_when: no
+
+  - name: Append active apt source hostnames to no_vpn_dest_hostnames
+    set_fact:
+      no_vpn_dest_hostnames: "{{ no_vpn_dest_hostnames + apt_sources.stdout_lines }}"
+
+  - name: Do DNS lookup of each hostname in no_vpn_dest_hostnames
+    set_fact:
+      dig_results: "{{ dig_results + lookup('community.general.dig', item, 'flat=0', wantlist=True) }}"
+    with_items: "{{ no_vpn_dest_hostnames }}"
+
+  - name: Append no_vpn_dest_hostnames' IP addresses into no_vpn_dest_addresses
+    set_fact:
+      no_vpn_dest_addresses: "{{ no_vpn_dest_addresses + [ item.address ] }}"
+    with_items: "{{ dig_results }}"
+
+  - name: Ensure static routes for non-VPN destinations are current
+    template:
+      src: etc/network/if-up.d/no_vpn.j2
+      dest: /etc/network/if-up.d/no_vpn
+      mode: '0755'
+    register: static_routes_result
+
+  - name: Restart networking
+    service:
+      name: networking
+      state: restarted
+    when: static_routes_result.changed
+
+  # For some reason, while the if-up.d/no_vpn file IS sourced on boot, the static routes do not
+  # stay intact during the boot sequence. Making rc.local run the if-up.d/no_vpn script (presumably
+  # later in the boot sequence) makes sure they're available. Aside from the boot sequence, the
+  # script DOES work as expected when restarting the `networking` service or manually taking
+  # interfaces up. ¯\_(ツ)_/¯
+  - name: Ensure static routes are restored on boot
+    lineinfile:
+      path: /etc/rc.local
+      line: /etc/network/if-up.d/no_vpn
+      insertbefore: exit 0
+
+  - name: Ensure repository caches are updated and required packages are installed
+    apt:
+      name:
+        - dnsmasq
+        - hostapd
+        - openvpn
+
+  - name: Ensure there is an entry for {{ ap_interface }} in /etc/dhcpcd.conf
+    lineinfile:
+      path: /etc/dhcpcd.conf
+      regexp: '(?im)interface\s+{{ ap_interface }}'
+      line: "interface {{ ap_interface }}"
+
+  - name: Ensure /etc/dhcpcd.conf's block for {{ ap_interface }} is current
+    replace:
+      path: /etc/dhcpcd.conf
+      regexp: '(?im)interface\s+{{ ap_interface }}(\n[ \t].*)*'
+      replace: >-
+        interface {{ ap_interface }}
+            static ip_address={{ ap_dhcp_network }}.1/24
+            static domain_name_servers={{ ap_dhcp_dns_server }}
+            nohook wpa_supplicant
+    notify: Restart dhcpcd
+
+  - name: Ensure /etc/hostapd/hostapd.conf is current
+    template:
+      src: etc/hostapd/hostapd.conf.j2
+      dest: /etc/hostapd/hostapd.conf
+      mode: '0660'
+      owner: 'root'
+      group: 'root'
+    notify: Restart hostapd
+
+  - name: Ensure hostapd is configured to use the /etc/hostapd/hostapd.conf config
+    lineinfile:
+      dest: "{{ item }}"
+      regexp: 'DAEMON_CONF\s*='
+      line: "DAEMON_CONF=\"/etc/hostapd/hostapd.conf\""
+    with_items:
+      - /etc/default/hostapd
+      - /etc/init.d/hostapd
+    notify: Restart hostapd
+
+  - name: Ensure /etc/dnsmasq.conf is current
+    lineinfile:
+      dest: /etc/dnsmasq.conf
+      regexp: '{{ item.key }}\s*='
+      line: "{{ item.key }}={{ item.val }}"
+    with_items:
+      - key: interface
+        val: "{{ ap_interface }}"
+      - key: server
+        val: "{{ ap_dhcp_dns_server }}"
+      - key: dhcp-range
+        val: "{{ ap_dhcp_network }}.50,{{ ap_dhcp_network }}.150,{{ ap_dhcp_lease_time }}"
+    notify: Restart dnsmasq
+
+  - name: Ensure /etc/sysctl.conf is current
+    lineinfile:
+      dest: /etc/sysctl.conf
+      regexp: 'net.ipv4.ip_forward\s*='
+      line: net.ipv4.ip_forward=1
+
+  - name: Check if IP forwarding is currently enabled
+    command: cat /proc/sys/net/ipv4/ip_forward
+    register: ip_forward
+    changed_when: no
+
+  - name: Enable IP forwarding
+    shell: echo 1 > /proc/sys/net/ipv4/ip_forward
+    when: ip_forward.stdout != "1"
+
+  - name: Ensure hostapd service is unmasked and enabled
+    systemd:
+      name: hostapd
+      enabled: yes
+      masked: no
+    notify: Restart hostapd
+
+  - name: Ensure /etc/openvpn/auth.txt is current
+    copy:
+      dest: /etc/openvpn/auth.txt
+      content: |
+        {{ vpn_username }}
+        {{ vpn_password }}
+    notify: Restart openvpn
+
+  - name: Ensure {{ opt_dir }} directory exists
+    file:
+      dest: "{{ opt_dir }}"
+      state: directory
+      mode: "0755"
+
+  - name: "[vypr] Retrieve latest VyprVPN OpenVPN configuration .zip"
+    unarchive:
+      src: "{{ vpn_vypr_server_config_url }}"
+      remote_src: yes
+      dest: "{{ opt_dir }}"
+    when: vpn_service == "vypr"
+    changed_when: no
+
+  - name: "[vypr] Copy OpenVPN config to temp location"
+    copy:
+      src: "{{ opt_dir }}/GF_OpenVPN_{{ vpn_vypr_server_config_version }}/OpenVPN{{ vpn_vypr_bits }}/{{ vpn_name }}.ovpn"
+      dest: "{{ opt_dir }}/.{{ role_name | replace('-', '_') }}.conf.tmp"
+      remote_src: yes
+    when: vpn_service == "vypr"
+    changed_when: no
+
+  - name: "[nord] Copy OpenVPN config to temp location"
+    get_url:
+      url: "https://{{vpn_nord_server_config_hostname }}/configs/files/ovpn_{{ vpn_nord_transport }}/servers/{{ vpn_name }}.nordvpn.com.{{ vpn_nord_transport }}.ovpn"
+      dest: "{{ opt_dir }}/.{{ role_name | replace('-', '_') }}.conf.tmp"
+      force: yes
+    when: vpn_service == "nord"
+    changed_when: no
+
+  - name: Modify temp copy of OpenVPN config to use auth.txt for authentication
+    lineinfile:
+      dest: "{{ opt_dir }}/.{{ role_name | replace('-', '_') }}.conf.tmp"
+      regexp: "auth-user-pass"
+      line: "auth-user-pass {{ openvpn_dir }}/auth.txt"
+    changed_when: no
+
+  - name: Ensure that live OpenVPN config is current
+    copy:
+      src: "{{ opt_dir }}/.{{ role_name | replace('-', '_') }}.conf.tmp"
+      dest: "{{ openvpn_dir }}/server/{{ role_name | replace('-', '_') }}.conf"
+      remote_src: yes
+    notify: Restart openvpn
+
+  - name: Ensure IP masquerading between {{ ap_interface }} and tun0 is present
+    iptables:
+      table: nat
+      chain: POSTROUTING
+      out_interface: tun0
+      jump: MASQUERADE
+      comment: "{{ iptables_comment }}"
+
+  - name: Save iptables rules
+    iptables_state:
+      state: saved
+      path: /etc/iptables.ipv4.nat
+
+  - name: Ensure saved iptables rules are restored on boot
+    lineinfile:
+      path: /etc/rc.local
+      line: iptables-restore < /etc/iptables.ipv4.nat
+      insertbefore: exit 0
+
+  - name: "Autostart {{ role_name | replace('-', '_') }} VPN service"
+    lineinfile:
+      path: /etc/default/openvpn
+      regexp: '(?i)autostart\s*='
+      line: "AUTOSTART=\"{{ role_name | replace('-', '_') }}\""
+
+  - name: Ensure openvpn service is unmasked and enabled
+    systemd:
+      name: "openvpn-server@{{ role_name | replace('-', '_') }}.service"
+      enabled: yes
+      masked: no
+    notify: Restart openvpn
+
+  become: yes

@@ -1,0 +1,17 @@
+---
+# NOTE: The "default" values here are the actual default values.  If you
+#       change them here, you should also change the documented default
+#       values in meta/argument_specs.yml
+ap_dhcp_network: 192.168.220
+ap_dhcp_lease_time: 12h
+ap_dhcp_dns_server: 1.1.1.1
+ap_channel: 6
+ap_interface: wlan0
+ap_ssid: private
+
+vpn_vypr_bits: 256
+
+vpn_nord_transport: tcp
+
+no_vpn_dest_addresses: [ ]
+no_vpn_dest_hostnames: [ ]

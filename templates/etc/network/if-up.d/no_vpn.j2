@@ -1,0 +1,5 @@
+#!/bin/sh
+
+{% for destination_ip in no_vpn_dest_addresses|sort %}
+ip route | grep '{{ destination_ip }} via {{ default_gateway }} dev {{ local_interface }}' || ip route add {{ destination_ip }} via {{ default_gateway }} dev {{ local_interface }}
+{% endfor %}

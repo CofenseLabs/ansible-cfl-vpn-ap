@@ -1,0 +1,82 @@
+---
+# NOTE: The "default" values here are only used for documentation. If you
+#       change them here, you should also change the actual default
+#       values in defaults/main.yml
+argument_specs:
+  main:
+    short_description: The main entry point for the cfl-vpnap role.
+    options:
+      ap_dhcp_network:
+        default: 192.168.220
+        description: "The first three octets of the AP's network; defaults to 192.168.220"
+
+      ap_dhcp_lease_time:
+        default: 12h
+        description: "The DHCP lease time of the AP's clients; defaults to 12h"
+
+      ap_dhcp_dns_server:
+        default: 1.1.1.1
+        description: "The DNS server assigned to the AP's clients; defaults to 1.1.1.1"
+
+      ap_channel:
+        type: int
+        default: 6
+        description: "The AP's wireless channel; defaults to 6"
+
+      ap_interface:
+        default: wlan0
+        description: "The name of the AP's (wireless) interface; defaults to wlan0"
+
+      ap_ssid:
+        default: private
+        description: "The SSID (network name) advertised by the AP; defaults to 'private'"
+
+      ap_wpa_passphrase:
+        required: true
+        description: "The AP's WPA passphrase that clients must use to connect"
+
+      no_vpn_dest_addresses:
+        type: list
+        elements: str
+        default: []
+        description: "A list of IP address destinations that should NOT be routed over the VPN; defaults to []"
+
+      no_vpn_dest_hostnames:
+        type: list
+        elements: str
+        default: []
+        description: "A list of hostname destinations that should NOT be routed over the VPN; defaults to []"
+
+      vpn_username:
+        required: true
+        description: "The VPN service account's username"
+
+      vpn_password:
+        required: true
+        description: "The VPN service account's password"
+
+      vpn_service:
+        required: true
+        description: "The VPN service to be used"
+        choices:
+          - nord
+          - vypr
+
+      vpn_name:
+        required: true
+        description: 'The name of the VPN configuration (sometimes called "server") to use.'
+
+      vpn_nord_transport:
+        default: tcp
+        description: "The protocol used by NordVPN; defaults to tcp"
+        choices:
+          - tcp
+          - udp
+
+      vpn_vypr_bits:
+        type: int
+        default: 256
+        description: "The VPN encryption level used for VyprVPN; defaults to 256"
+        choices:
+          - 160
+          - 256
